@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
-
 @RestController
 @RequestMapping("/api/evaluator")
 @CrossOrigin(origins = "*")
@@ -28,18 +27,22 @@ public class EvaluatorController {
      * Get evaluation queue (all SUBMITTED evaluations)
      * GET /api/evaluator/queue
      */
-    /**
-     * Get evaluation queue (all SUBMITTED evaluations)
-     * GET /api/evaluator/queue
-     */
     @GetMapping("/queue")
     public ResponseEntity<?> getEvaluationQueue() {
         try {
             String currentUserEmail = SecurityContextHolder.getContext().getAuthentication().getName();
+            System.out.println("✅ User logged in: " + currentUserEmail);
+            
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
 
-            if (!currentUser.getRole().equals(UserRole.EVALUATOR) && !currentUser.getRole().equals(UserRole.ADMIN)) {
+            System.out.println("👤 User role: " + currentUser.getRole());
+            System.out.println("👤 User role toString: " + currentUser.getRole().toString());
+
+            String roleString = currentUser.getRole().toString();
+            
+            if (!"EVALUATOR".equals(roleString) && !"ADMIN".equals(roleString)) {
+                System.err.println("❌ Access denied - Role: " + roleString);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "Only evaluators can access the queue"));
             }
@@ -95,7 +98,9 @@ public class EvaluatorController {
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
 
-            if (!currentUser.getRole().equals(UserRole.EVALUATOR) && !currentUser.getRole().equals(UserRole.ADMIN)) {
+            String roleString = currentUser.getRole().toString();
+            
+            if (!"EVALUATOR".equals(roleString) && !"ADMIN".equals(roleString)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "Only evaluators can approve evaluations"));
             }
@@ -108,16 +113,13 @@ public class EvaluatorController {
                         .body(Map.of("error", "Only submitted evaluations can be approved"));
             }
 
-            // Update evaluation status
             evaluation.setStatus(EvaluationStatus.APPROVED);
             evaluation.setApprovedAt(LocalDateTime.now());
             evaluationRepository.save(evaluation);
 
-            // Generate evaluation result
             EvaluationResult result = generateEvaluationResult(evaluation);
             resultRepository.save(result);
 
-            // Generate recommendations
             List<Recommendation> recommendations = generateRecommendations(evaluation);
             recommendationRepository.saveAll(recommendations);
 
@@ -153,7 +155,9 @@ public class EvaluatorController {
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
 
-            if (!currentUser.getRole().equals(UserRole.EVALUATOR) && !currentUser.getRole().equals(UserRole.ADMIN)) {
+            String roleString = currentUser.getRole().toString();
+            
+            if (!"EVALUATOR".equals(roleString) && !"ADMIN".equals(roleString)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "Only evaluators can reject evaluations"));
             }
@@ -187,15 +191,11 @@ public class EvaluatorController {
         }
     }
 
-    /**
-     * Generate evaluation result
-     */
     private EvaluationResult generateEvaluationResult(Evaluation evaluation) {
         EvaluationResult result = new EvaluationResult();
         result.setEvaluation(evaluation);
         result.setTotalScore(evaluation.getTotalScore());
 
-        // Determine certification level
         double score = evaluation.getTotalScore();
         if (score >= 90) {
             result.setCertificationLevel(CertificationLevel.PLATINUM);
@@ -210,22 +210,17 @@ public class EvaluatorController {
         }
 
         result.setIssuedDate(LocalDateTime.now());
-        result.setExpiryDate(LocalDateTime.now().plusYears(1)); // Valid for 1 year
+        result.setExpiryDate(LocalDateTime.now().plusYears(1));
 
         return result;
     }
 
-    /**
-     * Generate AI recommendations based on responses
-     */
     private List<Recommendation> generateRecommendations(Evaluation evaluation) {
         List<Recommendation> recommendations = new ArrayList<>();
 
-        // Get all responses for this evaluation
         List<EvaluationResponse> responses = responseRepository.findByEvaluation_EvaluationId(evaluation.getEvaluationId());
 
         for (EvaluationResponse response : responses) {
-            // Only generate recommendations for criteria with maturity level < 3
             if (response.getMaturityLevel() != null && response.getMaturityLevel() < 3) {
                 Recommendation rec = new Recommendation();
                 rec.setEvaluation(evaluation);
@@ -233,9 +228,8 @@ public class EvaluatorController {
                 rec.setPracticeId(response.getPracticeId());
                 rec.setCriterionId(response.getCriterionId());
                 rec.setCurrentMaturityLevel(response.getMaturityLevel());
-                rec.setTargetMaturityLevel(3); // Target is always full implementation
+                rec.setTargetMaturityLevel(3);
 
-                // Determine priority
                 if (response.getMaturityLevel() == 0) {
                     rec.setPriority(RecommendationPriority.CRITICAL);
                 } else if (response.getMaturityLevel() == 1) {
@@ -244,7 +238,6 @@ public class EvaluatorController {
                     rec.setPriority(RecommendationPriority.MEDIUM);
                 }
 
-                // Generate recommendation text
                 rec.setRecommendation(generateRecommendationText(response));
                 rec.setActionPlan(generateActionPlan(response));
 

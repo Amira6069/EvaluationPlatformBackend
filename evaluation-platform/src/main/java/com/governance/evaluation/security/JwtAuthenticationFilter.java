@@ -1,72 +1,80 @@
 package com.governance.evaluation.security;
 
-import com.governance.evaluation.entity.User;
-import com.governance.evaluation.repository.UserRepository;
+import com.governance.evaluation.service.JwtService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Optional;
 
 @Component
+@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtUtil jwtUtil;
-
-    @Autowired
-    private UserRepository userRepository;
+    private final JwtService jwtService;
+    private final UserDetailsService userDetailsService;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, 
-                                    HttpServletResponse response, 
-                                    FilterChain filterChain)
-            throws ServletException, IOException {
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain
+    ) throws ServletException, IOException {
+        
+        final String authHeader = request.getHeader("Authorization");
+        final String jwt;
+        final String userEmail;
 
-        final String authorizationHeader = request.getHeader("Authorization");
+        System.out.println("🔐 JWT Filter - Processing request: " + request.getMethod() + " " + request.getRequestURI());
+        System.out.println("🔐 Authorization header: " + (authHeader != null ? authHeader.substring(0, Math.min(30, authHeader.length())) + "..." : "MISSING"));
 
-        String email = null;
-        String jwt = null;
-
-        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-            jwt = authorizationHeader.substring(7);
-            try {
-                email = jwtUtil.extractEmail(jwt);
-            } catch (Exception e) {
-                System.err.println("JWT extraction error: " + e.getMessage());
-            }
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            System.out.println("⚠️ No Bearer token found - skipping JWT authentication");
+            filterChain.doFilter(request, response);
+            return;
         }
 
-        if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            Optional<User> optionalUser = userRepository.findByEmail(email);
-            
-            if (optionalUser.isPresent() && jwtUtil.validateToken(jwt, email)) {
-                User user = optionalUser.get();
+        jwt = authHeader.substring(7);
+        
+        try {
+            userEmail = jwtService.extractUsername(jwt);
+            System.out.println("📧 Extracted email from token: " + userEmail);
+
+            if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
                 
-                // ✅ WORKS FOR BOTH String AND Enum
-                String roleString = user.getRole().toString();
-                SimpleGrantedAuthority authority = new SimpleGrantedAuthority(roleString);
-                
-                UsernamePasswordAuthenticationToken authToken = 
-                    new UsernamePasswordAuthenticationToken(
-                        email,
-                        null,
-                        Collections.singletonList(authority)
+                System.out.println("👤 Loaded user details: " + userDetails.getUsername());
+                System.out.println("🔍 Authorities: " + userDetails.getAuthorities());
+
+                if (jwtService.isTokenValid(jwt, userDetails)) {
+                    System.out.println("✅ Token is valid - setting authentication");
+                    
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            userDetails,
+                            null,
+                            userDetails.getAuthorities()
                     );
-                
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                    
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                    
+                    System.out.println("✅ Authentication set in SecurityContext");
+                } else {
+                    System.out.println("❌ Token validation failed");
+                }
             }
+        } catch (Exception e) {
+            System.err.println("❌ JWT Filter error: " + e.getMessage());
+            e.printStackTrace();
         }
 
         filterChain.doFilter(request, response);

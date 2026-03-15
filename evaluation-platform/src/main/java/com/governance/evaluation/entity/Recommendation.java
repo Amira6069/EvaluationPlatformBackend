@@ -1,55 +1,50 @@
 package com.governance.evaluation.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.CreationTimestamp;
-
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "recommendations")
 @Data
 public class Recommendation {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "recommendation_id")
     private Long recommendationId;
-    
-    @ManyToOne(fetch = FetchType.EAGER)
+
+    @ManyToOne
     @JoinColumn(name = "evaluation_id", nullable = false)
+    @JsonIgnore
     private Evaluation evaluation;
-    
+
     @Column(name = "principle_id")
-    private Integer principleId;
-    
+    private Long principleId;
+
     @Column(name = "practice_id")
-    private Integer practiceId;
-    
+    private Long practiceId;
+
     @Column(name = "criterion_id")
-    private Integer criterionId;
-    
+    private Long criterionId;
+
     @Column(name = "current_maturity_level")
     private Integer currentMaturityLevel;
-    
+
     @Column(name = "target_maturity_level")
     private Integer targetMaturityLevel;
-    
-    @Column(name = "recommendation_text", columnDefinition = "TEXT", nullable = false)
-    private String recommendationText;
-    
-    @Column(name = "priority")
+
     @Enumerated(EnumType.STRING)
-    private Priority priority;
-    
-    @CreationTimestamp
-    @Column(name = "generated_date", updatable = false)
-    private LocalDateTime generatedDate;
-    
-    public enum Priority {
-        LOW,
-        MEDIUM,
-        HIGH,
-        CRITICAL
-    }
+    @Column(name = "priority")
+    private RecommendationPriority priority;
+
+    @Column(name = "recommendation", columnDefinition = "TEXT")
+    private String recommendation;
+
+    @Column(name = "action_plan", columnDefinition = "TEXT")
+    private String actionPlan;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 }

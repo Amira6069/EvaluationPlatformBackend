@@ -161,21 +161,40 @@ public class AdminController {
     /**
      * Delete user
      */
+    /**
+     * Delete user
+     * DELETE /api/admin/users/{id}
+     */
     @DeleteMapping("/users/{id}")
     public ResponseEntity<?> deleteUser(@PathVariable Long id) {
         try {
-            if (!userRepository.existsById(id)) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(Map.of("error", "User not found"));
+            System.out.println("🗑️ Admin deleting user: " + id);
+
+            User user = userRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            // ✅ CHECK IF USER HAS EVALUATIONS
+            if (user.getRole().equals(UserRole.ORGANIZATION)) {
+                List<Evaluation> evaluations = evaluationRepository.findByOrganization_UserId(id);
+                if (!evaluations.isEmpty()) {
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body(Map.of(
+                                "error", "Cannot delete user with existing evaluations",
+                                "details", "This user has " + evaluations.size() + " evaluation(s). Delete or reassign them first."
+                            ));
+                }
             }
 
-            userRepository.deleteById(id);
+            userRepository.delete(user);
+            System.out.println("✅ User deleted: " + id);
+
             return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
 
         } catch (Exception e) {
             System.err.println("❌ Error deleting user: " + e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to delete user"));
+                    .body(Map.of("error", "Failed to delete user", "details", e.getMessage()));
         }
     }
 

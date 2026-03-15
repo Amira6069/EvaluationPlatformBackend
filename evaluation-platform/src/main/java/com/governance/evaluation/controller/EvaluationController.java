@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
+
+
 @RestController
 @RequestMapping("/api/evaluations")
 @CrossOrigin(origins = "*")
@@ -20,11 +22,12 @@ public class EvaluationController {
     private final EvaluationRepository evaluationRepository;
     private final UserRepository userRepository;
     private final EvaluationResponseRepository responseRepository;
-    private final EvaluationResultRepository resultRepository;
-    private final RecommendationRepository recommendationRepository;
+    private final PrincipleRepository principleRepository;
+    private final PracticeRepository practiceRepository;
+    private final CriterionRepository criterionRepository;
 
     /**
-     * Get all evaluations for current user (organization)
+     * Get my evaluations
      * GET /api/evaluations/my
      */
     @GetMapping("/my")
@@ -36,7 +39,7 @@ public class EvaluationController {
 
             List<Evaluation> evaluations = evaluationRepository.findByOrganization_UserId(currentUser.getUserId());
             
-            System.out.println("📋 Found " + evaluations.size() + " evaluations for user: " + currentUserEmail);
+            System.out.println("📋 Found " + evaluations.size() + " evaluations for user: " + currentUser.getEmail());
 
             return ResponseEntity.ok(evaluations);
 
@@ -62,14 +65,26 @@ public class EvaluationController {
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
 
-            // ✅ FIXED: Allow evaluators and admins to view ANY evaluation
+            // ✅ CRITICAL: Use .toString() for comparison
+            String userRole = currentUser.getRole().toString();
             boolean isOwner = evaluation.getOrganization().getUserId().equals(currentUser.getUserId());
-            boolean isEvaluatorOrAdmin = currentUser.getRole().equals(UserRole.EVALUATOR) || currentUser.getRole().equals(UserRole.ADMIN);
+            boolean isEvaluator = "EVALUATOR".equals(userRole);
+            boolean isAdmin = "ADMIN".equals(userRole);
             
-            if (!isOwner && !isEvaluatorOrAdmin) {
+            System.out.println("🔐 Authorization check:");
+            System.out.println("  User: " + currentUser.getEmail());
+            System.out.println("  Role: " + userRole);
+            System.out.println("  Is Owner: " + isOwner);
+            System.out.println("  Is Evaluator: " + isEvaluator);
+            System.out.println("  Is Admin: " + isAdmin);
+            
+            if (!isOwner && !isEvaluator && !isAdmin) {
+                System.err.println("❌ Access DENIED for user: " + currentUser.getEmail());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "Not authorized to view this evaluation"));
             }
+
+            System.out.println("✅ Access GRANTED - User " + currentUser.getEmail() + " accessing evaluation " + id);
 
             return ResponseEntity.ok(evaluation);
 
@@ -78,6 +93,53 @@ public class EvaluationController {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to fetch evaluation"));
+        }
+    }
+
+    /**
+     * Get evaluation responses
+     * GET /api/evaluations/{id}/responses
+     */
+    @GetMapping("/{id}/responses")
+    public ResponseEntity<?> getEvaluationResponses(@PathVariable Long id) {
+        try {
+            String currentUserEmail = SecurityContextHolder.getContext().getAuthentication().getName();
+            User currentUser = userRepository.findByEmail(currentUserEmail)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            Evaluation evaluation = evaluationRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Evaluation not found"));
+
+            // ✅ CRITICAL: Use .toString() for comparison
+            String userRole = currentUser.getRole().toString();
+            boolean isOwner = evaluation.getOrganization().getUserId().equals(currentUser.getUserId());
+            boolean isEvaluator = "EVALUATOR".equals(userRole);
+            boolean isAdmin = "ADMIN".equals(userRole);
+            
+            System.out.println("🔐 Responses authorization check:");
+            System.out.println("  User: " + currentUser.getEmail());
+            System.out.println("  Role: " + userRole);
+            System.out.println("  Is Owner: " + isOwner);
+            System.out.println("  Is Evaluator: " + isEvaluator);
+            System.out.println("  Is Admin: " + isAdmin);
+            
+            if (!isOwner && !isEvaluator && !isAdmin) {
+                System.err.println("❌ Access DENIED for responses");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Not authorized to view responses"));
+            }
+
+            List<EvaluationResponse> responses = responseRepository.findByEvaluation_EvaluationId(id);
+            
+            System.out.println("✅ Access GRANTED - Retrieved " + responses.size() + " responses for evaluation " + id);
+
+            return ResponseEntity.ok(responses);
+
+        } catch (Exception e) {
+            System.err.println("❌ Error fetching responses: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to fetch responses"));
         }
     }
 
@@ -92,38 +154,26 @@ public class EvaluationController {
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
 
-            // Check if user is an organization
-            if (!"ORGANIZATION".equals(currentUser.getRole().toString())) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of("error", "Only organizations can create evaluations"));
-            }
-
             Evaluation evaluation = new Evaluation();
-            evaluation.setOrganization(currentUser);
             evaluation.setName(request.get("name"));
             evaluation.setPeriod(request.get("period"));
             evaluation.setDescription(request.get("description"));
+            evaluation.setOrganization(currentUser);
             evaluation.setStatus(EvaluationStatus.CREATED);
+            evaluation.setTotalScore(0.0);
             evaluation.setCreatedAt(LocalDateTime.now());
 
             Evaluation savedEvaluation = evaluationRepository.save(evaluation);
             
-            System.out.println("✅ Evaluation created: " + savedEvaluation.getName() + "  (ID: " + savedEvaluation.getEvaluationId() + ")");
+            System.out.println("✅ Evaluation created: " + savedEvaluation.getName() + " (ID: " + savedEvaluation.getEvaluationId() + ")");
 
-            Map<String, Object> response = new HashMap<>();
-            response.put("evaluationId", savedEvaluation.getEvaluationId());
-            response.put("name", savedEvaluation.getName());
-            response.put("period", savedEvaluation.getPeriod());
-            response.put("description", savedEvaluation.getDescription());
-            response.put("status", savedEvaluation.getStatus().toString());
-
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(savedEvaluation);
 
         } catch (Exception e) {
             System.err.println("❌ Error creating evaluation: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to create evaluation", "details", e.getMessage()));
+                    .body(Map.of("error", "Failed to create evaluation"));
         }
     }
 
@@ -150,103 +200,71 @@ public class EvaluationController {
             if (request.containsKey("period")) evaluation.setPeriod(request.get("period"));
             if (request.containsKey("description")) evaluation.setDescription(request.get("description"));
 
-            evaluationRepository.save(evaluation);
+            Evaluation updatedEvaluation = evaluationRepository.save(evaluation);
+            
+            System.out.println("✅ Evaluation updated: " + updatedEvaluation.getEvaluationId());
 
-            return ResponseEntity.ok(Map.of("message", "Evaluation updated successfully"));
+            return ResponseEntity.ok(updatedEvaluation);
 
         } catch (Exception e) {
             System.err.println("❌ Error updating evaluation: " + e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to update evaluation"));
         }
     }
 
     /**
-     * Save evaluation responses
+     * Save responses
      * POST /api/evaluations/{id}/responses
      */
     @PostMapping("/{id}/responses")
-    public ResponseEntity<?> saveResponses(@PathVariable Long id, @RequestBody List<Map<String, Object>> responses) {
+    public ResponseEntity<?> saveResponses(@PathVariable Long id, @RequestBody List<Map<String, Object>> responsesData) {
         try {
-            System.out.println("📝 Saving " + responses.size() + " responses for evaluation: " + id);
-            
             Evaluation evaluation = evaluationRepository.findById(id)
                     .orElseThrow(() -> new RuntimeException("Evaluation not found"));
-            
+
             String currentUserEmail = SecurityContextHolder.getContext().getAuthentication().getName();
             User currentUser = userRepository.findByEmail(currentUserEmail)
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            
+
             if (!evaluation.getOrganization().getUserId().equals(currentUser.getUserId())) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of("error", "Not authorized to modify this evaluation"));
+                        .body(Map.of("error", "Not authorized to save responses for this evaluation"));
             }
-            
-            // Delete existing responses
-            System.out.println("🗑️ Deleting existing responses...");
+
             responseRepository.deleteByEvaluation_EvaluationId(id);
-            
-            // Save new responses
-            int savedCount = 0;
-            for (Map<String, Object> respData : responses) {
-                try {
-                    EvaluationResponse response = new EvaluationResponse();
-                    response.setEvaluation(evaluation);
-                    
-                    // Safer null checks
-                    if (respData.containsKey("principleId") && respData.get("principleId") != null) {
-                        response.setPrincipleId(((Number) respData.get("principleId")).intValue());
-                    }
-                    if (respData.containsKey("practiceId") && respData.get("practiceId") != null) {
-                        response.setPracticeId(((Number) respData.get("practiceId")).intValue());
-                    }
-                    if (respData.containsKey("criterionId") && respData.get("criterionId") != null) {
-                        response.setCriterionId(((Number) respData.get("criterionId")).longValue());
-                    }
-                    if (respData.containsKey("maturityLevel") && respData.get("maturityLevel") != null) {
-                        response.setMaturityLevel(((Number) respData.get("maturityLevel")).intValue());
-                    } else {
-                        response.setMaturityLevel(0); // Default to 0 if missing
-                    }
-                    if (respData.containsKey("evidence") && respData.get("evidence") != null) {
-                        response.setEvidence((String) respData.get("evidence"));
-                    }
-                    if (respData.containsKey("comments") && respData.get("comments") != null) {
-                        response.setComments((String) respData.get("comments"));
-                    }
-                    
-                    responseRepository.save(response);
-                    savedCount++;
-                    
-                } catch (Exception e) {
-                    System.err.println("❌ Error saving response: " + e.getMessage());
-                    System.err.println("   Response data: " + respData);
-                    e.printStackTrace();
-                    // Continue with next response instead of failing entire batch
-                }
+
+            for (Map<String, Object> responseData : responsesData) {
+                EvaluationResponse response = new EvaluationResponse();
+                response.setEvaluation(evaluation);
+                response.setPrincipleId(((Number) responseData.get("principleId")).longValue());
+                response.setPracticeId(((Number) responseData.get("practiceId")).longValue());
+                response.setCriterionId(((Number) responseData.get("criterionId")).longValue());
+                response.setMaturityLevel((Integer) responseData.get("maturityLevel"));
+                response.setEvidence((String) responseData.get("evidence"));
+                response.setComments((String) responseData.get("comments"));
+                response.setEvidenceFile((String) responseData.get("evidenceFile")); // ✅ NEW
+                response.setCreatedAt(LocalDateTime.now());
+
+                responseRepository.save(response);
             }
-            
-            System.out.println("✅ Saved " + savedCount + "/" + responses.size() + " responses successfully");
-            
-            // Update evaluation status
+
             evaluation.setStatus(EvaluationStatus.IN_PROGRESS);
             evaluationRepository.save(evaluation);
-            
+
+            System.out.println("✅ Saved " + responsesData.size() + " responses for evaluation " + id);
+
             return ResponseEntity.ok(Map.of(
                 "message", "Responses saved successfully",
-                "saved", savedCount,
-                "total", responses.size()
+                "count", responsesData.size()
             ));
-            
+
         } catch (Exception e) {
-            System.err.println("❌ Error in saveResponses endpoint: " + e.getMessage());
+            System.err.println("❌ Error saving responses: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                        "error", "Failed to save responses", 
-                        "details", e.getMessage(),
-                        "class", e.getClass().getName()
-                    ));
+                    .body(Map.of("error", "Failed to save responses"));
         }
     }
 
@@ -257,8 +275,6 @@ public class EvaluationController {
     @PostMapping("/{id}/submit")
     public ResponseEntity<?> submitEvaluation(@PathVariable Long id) {
         try {
-            System.out.println("📤 Submitting evaluation: " + id);
-            
             Evaluation evaluation = evaluationRepository.findById(id)
                     .orElseThrow(() -> new RuntimeException("Evaluation not found"));
 
@@ -271,50 +287,37 @@ public class EvaluationController {
                         .body(Map.of("error", "Not authorized to submit this evaluation"));
             }
 
-            // Calculate score
             List<EvaluationResponse> responses = responseRepository.findByEvaluation_EvaluationId(id);
-            
-            System.out.println("📊 Found " + responses.size() + " responses for evaluation");
-            
+
             if (responses.isEmpty()) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("error", "Cannot submit evaluation without responses"));
             }
 
             double totalScore = 0;
-            int maxScore = responses.size() * 3; // Max maturity level is 3
-            
+            int totalCriteria = responses.size();
+
             for (EvaluationResponse response : responses) {
-                if (response.getMaturityLevel() != null) {
-                    totalScore += response.getMaturityLevel();
-                }
+                totalScore += (response.getMaturityLevel() / 3.0) * 100;
             }
 
-            double percentageScore = (totalScore / maxScore) * 100;
+            double averageScore = totalScore / totalCriteria;
 
+            evaluation.setTotalScore(averageScore);
             evaluation.setStatus(EvaluationStatus.SUBMITTED);
-            evaluation.setTotalScore(percentageScore);
             evaluation.setSubmittedAt(LocalDateTime.now());
-            evaluationRepository.save(evaluation);
+            
+            Evaluation submittedEvaluation = evaluationRepository.save(evaluation);
 
-            System.out.println("✅ Evaluation submitted. Score: " + Math.round(percentageScore) + "%");
+            System.out.println("✅ Evaluation submitted: " + id + " with score: " + averageScore + "%");
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("evaluationId", evaluation.getEvaluationId());
-            result.put("totalScore", percentageScore);
-            result.put("status", "SUBMITTED");
-            result.put("message", "Evaluation submitted successfully");
-
-            return ResponseEntity.ok(result);
+            return ResponseEntity.ok(submittedEvaluation);
 
         } catch (Exception e) {
             System.err.println("❌ Error submitting evaluation: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of(
-                        "error", "Failed to submit evaluation", 
-                        "details", e.getMessage()
-                    ));
+                    .body(Map.of("error", "Failed to submit evaluation"));
         }
     }
 
@@ -338,56 +341,16 @@ public class EvaluationController {
             }
 
             evaluationRepository.delete(evaluation);
-
-            System.out.println("🗑️ Evaluation deleted: " + id);
+            
+            System.out.println("✅ Evaluation deleted: " + id);
 
             return ResponseEntity.ok(Map.of("message", "Evaluation deleted successfully"));
 
         } catch (Exception e) {
             System.err.println("❌ Error deleting evaluation: " + e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to delete evaluation"));
-        }
-    }
-
-    /**
-     * Get evaluation result
-     * GET /api/evaluations/{id}/result
-     */
-    @GetMapping("/{id}/result")
-    public ResponseEntity<?> getEvaluationResult(@PathVariable Long id) {
-        try {
-            Optional<EvaluationResult> result = resultRepository.findByEvaluation_EvaluationId(id);
-
-            if (result.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(Map.of("error", "No result found for this evaluation"));
-            }
-
-            return ResponseEntity.ok(result.get());
-
-        } catch (Exception e) {
-            System.err.println("❌ Error fetching result: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to fetch result"));
-        }
-    }
-
-    /**
-     * Get recommendations for evaluation
-     * GET /api/evaluations/{id}/recommendations
-     */
-    @GetMapping("/{id}/recommendations")
-    public ResponseEntity<?> getRecommendations(@PathVariable Long id) {
-        try {
-            List<Recommendation> recommendations = recommendationRepository.findByEvaluation_EvaluationId(id);
-
-            return ResponseEntity.ok(recommendations);
-
-        } catch (Exception e) {
-            System.err.println("❌ Error fetching recommendations: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to fetch recommendations"));
         }
     }
 }

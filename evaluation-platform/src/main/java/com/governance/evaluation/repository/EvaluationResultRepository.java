@@ -8,10 +8,5 @@ import java.util.Optional;
 
 @Repository
 public interface EvaluationResultRepository extends JpaRepository<EvaluationResult, Long> {
-    
-    // Find result by evaluation ID
     Optional<EvaluationResult> findByEvaluation_EvaluationId(Long evaluationId);
-    
-    // Check if result exists for evaluation
-    boolean existsByEvaluation_EvaluationId(Long evaluationId);
 }
